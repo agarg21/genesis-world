@@ -28,6 +28,8 @@ jobs:
       GS_TORCH_FORCE_CPU_DEVICE: ${{ startsWith(matrix.OS, 'macos-') && '1' || '0' }}
       QD_OFFLINE_CACHE: "1"
       QD_OFFLINE_CACHE_CLEANING_POLICY: "never"
+      QD_OFFLINE_CACHE_FILE_PATH: ${{ github.workspace }}/.cache/quadrants
+      GS_CACHE_FILE_PATH: ${{ github.workspace }}/.cache/genesis
       QD_ENABLE_CUDA: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
       QD_ENABLE_AMDGPU: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
       QD_ENABLE_METAL: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
@@ -106,9 +108,33 @@ jobs:
           # (test_recorders.py::test_plotter). Pin below 3.11 until the snapshot is regenerated.
           pip install "matplotlib<3.11"
 
+      - name: Get Quadrants version
+        id: quadrants_version
+        shell: bash
+        run: |
+          QUADRANTS_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('quadrants'))")
+          echo "QUADRANTS_VERSION=${QUADRANTS_VERSION}" >> $GITHUB_OUTPUT
+
+      # Kernel compile cache (Quadrants offline cache + Genesis caches), as in examples.yml. A rerun of the same PR
+      # restores the cache its previous run saved, so it only recompiles the kernels that changed.
+      - name: Restore cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}-generic-${{ steps.quadrants_version.outputs.QUADRANTS_VERSION }}
+          restore-keys: |
+            ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}-generic-${{ steps.quadrants_version.outputs.QUADRANTS_VERSION }}-
+
       - name: Run unit tests
         run: |
           pytest -v -ra --logical ${{ matrix.GS_ENABLE_NDARRAY != '0' && '--dev' || '' }} --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked --failure-artifacts-dir "${{ runner.temp }}/failure_artifacts" ./tests
+
+      - name: Save cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          key: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}-generic-${{ steps.quadrants_version.outputs.QUADRANTS_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # The image a mismatching snapshot test rendered
       - name: Upload the artifacts of the failed tests
